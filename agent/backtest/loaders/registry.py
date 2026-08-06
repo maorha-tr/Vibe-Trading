@@ -54,6 +54,7 @@ VALID_SOURCES: set[str] = {
     "pykrx",
     "longbridge",
     "mt5",
+    "etoro",
     "local",
     "auto",
 }
@@ -104,6 +105,7 @@ def _ensure_registered() -> None:
         "backtest.loaders.pykrx_loader",
         "backtest.loaders.longbridge",
         "backtest.loaders.mt5_loader",
+        "backtest.loaders.etoro_loader",
         "backtest.loaders.local_loader",
     ]
     import importlib
@@ -135,18 +137,18 @@ _NO_NETWORK_FALLBACK_SOURCES: frozenset[str] = frozenset({"local", "qveris"})  #
 # REST fallbacks placed deeper in the chain.
 FALLBACK_CHAINS: dict[str, list[str]] = {
     "a_share":   ["tencent", "mootdx", "eastmoney", "baostock", "akshare", "tushare", "local"],
-    "us_equity": ["yahoo", "stooq", "sina", "eastmoney", "yfinance", "tiingo", "fmp", "finnhub", "alphavantage", "longbridge", "akshare", "local"],
+    "us_equity": ["yahoo", "stooq", "sina", "eastmoney", "yfinance", "tiingo", "fmp", "finnhub", "alphavantage", "longbridge", "etoro", "akshare", "local"],
     "hk_equity": ["eastmoney", "yahoo", "futu", "yfinance", "akshare", "longbridge", "local"],
     "india_equity": ["yahoo", "yfinance", "india_broker", "local"],
     "kr_equity":   ["pykrx", "yahoo", "yfinance", "local"],
     # OKX first (native), then dedicated Binance, then generic CCXT / Yahoo.
-    "crypto":    ["okx", "binance", "ccxt", "yfinance", "local"],
+    "crypto":    ["okx", "binance", "ccxt", "yfinance", "etoro", "local"],
     "futures":   ["tushare", "akshare", "local"],
     "fund":      ["tushare", "akshare", "local"],
     "macro":     ["akshare", "tushare", "local"],
     # mt5 leads when a local MetaTrader 5 terminal is attached (Windows-only,
     # broker feed); otherwise it reports unavailable and the chain proceeds.
-    "forex":     ["mt5", "akshare", "yfinance", "local"],
+    "forex":     ["mt5", "akshare", "yfinance", "etoro", "local"],
 }
 
 

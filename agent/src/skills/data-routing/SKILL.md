@@ -38,6 +38,7 @@ per-source skill.
 | alphavantage | US equities | Yes (`ALPHAVANTAGE_API_KEY`) | Unrestricted | data-routing |
 | tiingo | US equities | Yes (`TIINGO_API_KEY`) | Unrestricted | data-routing |
 | fmp | US equities | Yes (`FMP_API_KEY`) | Unrestricted | data-routing |
+| etoro | US equities, crypto, forex | Yes (`ETORO_API_KEY` + `ETORO_USER_KEY`, or `~/.vibe-trading/etoro.json`) | Unrestricted; max 1000 bars back from today | data-routing |
 | qveris | Global multi-asset (paid, credits) | Yes (`QVERIS_API_KEY` / Settings) | QVeris API | qveris <!-- QVERIS-INTEGRATION --> |
 
 ## Capability → Tool Routing

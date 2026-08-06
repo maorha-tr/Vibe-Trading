@@ -24,6 +24,7 @@ _SDK_CONNECTOR_MODULES = {
     "shoonya": "src.trading.connectors.shoonya.sdk",
     "trading212": "src.trading.connectors.trading212.sdk",
     "mt5": "src.trading.connectors.mt5.sdk",
+    "etoro": "src.trading.connectors.etoro.sdk",
 }
 
 
@@ -212,6 +213,7 @@ _CONNECTOR_INSTRUMENT = {
     "longbridge": ("equity", None),
     "futu": ("equity", None),
     "trading212": ("equity", None),
+    "etoro": ("equity", None),
 }
 
 

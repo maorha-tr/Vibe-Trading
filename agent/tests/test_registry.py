@@ -153,7 +153,7 @@ class TestFallbackChains:
         ]
         assert FALLBACK_CHAINS["us_equity"] == [
             "yahoo", "stooq", "sina", "eastmoney", "yfinance", "tiingo", "fmp",
-            "finnhub", "alphavantage", "longbridge", "akshare", "local",
+            "finnhub", "alphavantage", "longbridge", "etoro", "akshare", "local",
         ]
         assert FALLBACK_CHAINS["hk_equity"] == [
             "eastmoney", "yahoo", "futu", "yfinance", "akshare", "longbridge", "local",
@@ -173,13 +173,15 @@ class TestFallbackChains:
 
     def test_unchanged_chains_preserved(self) -> None:
         """crypto/futures/fund/macro/forex chains must be left untouched."""
-        assert FALLBACK_CHAINS["crypto"] == ["okx", "binance", "ccxt", "yfinance", "local"]
+        # etoro trails each of its chains: key-gated and capped at 1000 bars,
+        # so free public sources stay preferred.
+        assert FALLBACK_CHAINS["crypto"] == ["okx", "binance", "ccxt", "yfinance", "etoro", "local"]
         assert FALLBACK_CHAINS["futures"] == ["tushare", "akshare", "local"]
         assert FALLBACK_CHAINS["fund"] == ["tushare", "akshare", "local"]
         assert FALLBACK_CHAINS["macro"] == ["akshare", "tushare", "local"]
         # mt5 heads the forex chain (terminal feed when attached), degrading to
         # the previous chain unchanged.
-        assert FALLBACK_CHAINS["forex"] == ["mt5", "akshare", "yfinance", "local"]
+        assert FALLBACK_CHAINS["forex"] == ["mt5", "akshare", "yfinance", "etoro", "local"]
 
 
 # ---------------------------------------------------------------------------

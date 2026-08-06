@@ -26,6 +26,7 @@ from src.tools.mcp import MCPRemoteTool
 from src.trading.connectors.alpaca.classification import ALPACA_TOOL_CLASS
 from src.trading.connectors.binance.classification import BINANCE_TOOL_CLASS
 from src.trading.connectors.dhan.classification import DHAN_TOOL_CLASS
+from src.trading.connectors.etoro.classification import ETORO_TOOL_CLASS
 from src.trading.connectors.futu.classification import FUTU_TOOL_CLASS
 from src.trading.connectors.ibkr.classification import IBKR_TOOL_CLASS
 from src.trading.connectors.longbridge.classification import LONGBRIDGE_TOOL_CLASS
@@ -55,6 +56,7 @@ _BROKER_CURATED_MAPS = {
     "shoonya": SHOONYA_TOOL_CLASS,
     "trading212": TRADING212_TOOL_CLASS,
     "mt5": MT5_TOOL_CLASS,
+    "etoro": ETORO_TOOL_CLASS,
 }
 
 

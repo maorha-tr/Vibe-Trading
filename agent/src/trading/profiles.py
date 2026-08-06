@@ -9,6 +9,7 @@ from src.config.paths import get_runtime_root
 from src.trading.connectors.alpaca.profiles import ALPACA_PROFILES
 from src.trading.connectors.binance.profiles import BINANCE_PROFILES
 from src.trading.connectors.dhan.profiles import DHAN_PROFILES
+from src.trading.connectors.etoro.profiles import ETORO_PROFILES
 from src.trading.connectors.futu.profiles import FUTU_PROFILES
 from src.trading.connectors.ibkr.profiles import IBKR_PROFILES
 from src.trading.connectors.longbridge.profiles import LONGBRIDGE_PROFILES
@@ -36,6 +37,7 @@ BUILTIN_PROFILES: tuple[TradingProfile, ...] = (
     *SHOONYA_PROFILES,
     *TRADING212_PROFILES,
     *MT5_PROFILES,
+    *ETORO_PROFILES,
 )
 
 

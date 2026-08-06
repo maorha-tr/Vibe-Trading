@@ -56,6 +56,7 @@ class MarketDataTool(BaseTool):
                     "fmp",
                     "mt5",
                     "pykrx",
+                    "etoro",
                 ],
                 "description": (
                     "Data source. 'auto' detects from symbol format with fallback. "
@@ -68,7 +69,10 @@ class MarketDataTool(BaseTool):
                     "package, else Korea falls back to yahoo/yfinance). Key-gated "
                     "REST: tushare (China A-shares), finnhub/alphavantage/tiingo/fmp "
                     "(US/global). mt5: forex/metals from a local MetaTrader 5 "
-                    "terminal (Windows; e.g. EUR/USD, XAUUSD.FX)."
+                    "terminal (Windows; e.g. EUR/USD, XAUUSD.FX). etoro: "
+                    "US equities/crypto/forex via the eToro public API "
+                    "(needs ETORO_API_KEY + ETORO_USER_KEY; max 1000 bars "
+                    "back from today per symbol)."
                 ),
                 "default": "auto",
             },

@@ -394,7 +394,7 @@ def test_longbridge_place_order_paper_only_guard() -> None:
     assert out2["status"] == "error" and "paper" in out2["error"].lower()
 
 
-@pytest.mark.parametrize("connector", ["tiger", "alpaca", "okx", "binance", "futu", "longbridge", "mt5"])
+@pytest.mark.parametrize("connector", ["tiger", "alpaca", "okx", "binance", "futu", "longbridge", "mt5", "etoro"])
 def test_connector_place_order_rejects_bad_side(connector) -> None:
     import importlib
 
@@ -404,7 +404,7 @@ def test_connector_place_order_rejects_bad_side(connector) -> None:
     assert out["status"] == "error"
 
 
-@pytest.mark.parametrize("connector", ["tiger", "alpaca", "okx", "binance", "futu", "longbridge", "mt5"])
+@pytest.mark.parametrize("connector", ["tiger", "alpaca", "okx", "binance", "futu", "longbridge", "mt5", "etoro"])
 def test_connector_place_order_rejects_both_qty_and_notional(connector) -> None:
     import importlib
 
