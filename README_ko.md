@@ -478,7 +478,7 @@ clone에서 실행하세요(`pip install -e .`).
 </details>
 
 <details>
-<summary><b>브로커 커넥터</b> <sub>12개 브로커 — read + paper, 지원 시 bounded-live</sub></summary>
+<summary><b>브로커 커넥터</b> <sub>13개 브로커 — read + paper, 지원 시 bounded-live</sub></summary>
 
 connector-first 프로필. 대부분의 브로커가 read + 페이퍼 계정 주문 실행을 지원하지만 IBKR은 읽기 전용이고, Robinhood는 페이퍼 계정 없이 실거래 전용이며, Trading 212는 페이퍼를 포함해 주문 실행을 모두 거부하고, 실거래 주문 실행은 사용자 정의 mandate(심볼 허용목록, 주문 크기 / 익스포저 상한, 일일 거래 한도, 즉시 kill switch)로 제한되고 자금을 보관하지 않습니다 — 실행은 브로커가 합니다. 주문 실행 도구는 MCP에 노출되지 않습니다(agent + CLI 전용). 리서치 / 백테스트 경로는 구조적으로 모든 실거래 엔드포인트에서 차단됩니다.
 
@@ -493,6 +493,7 @@ connector-first 프로필. 대부분의 브로커가 read + 페이퍼 계정 주
 | **MetaTrader 5** | forex / CFD | read + paper + bounded live (Exness-style; demo ⇔ paper identity guard) |
 | **Longbridge** · **Dhan** · **Shoonya** | US / HK · India (NSE/BSE) | read + paper only — no runtime paper/live discriminator, so live order placement is hard-refused |
 | **Trading 212** | UK / EU | fully read-only — `place_order` / `cancel_order` hard-refuse even paper |
+| **eToro** | global multi-asset | read + demo (virtual portfolio) orders via the public API; real accounts read-only — demo routes carry a `demo` path segment and user keys are environment-bound |
 
 Paper-vs-live는 **구조적 브로커별 런타임 가드**(account-id 형식, 호스트 분리, demo 플래그, 또는 trade environment)이며, agent가 뒤집을 수 있는 config 플래그가 아닙니다. 그런 구분자를 노출하지 않는 브로커는 페이퍼 + 읽기 전용으로 제한됩니다.
 

@@ -59,7 +59,7 @@ BADGE_ORDER = ("skills", "brokers", "presets", "alphas", "engines")
 # countable from a single directory — connectors, profiles and the read-only
 # caps do not map one-to-one. It is pinned here so a reader-facing number still
 # has one owner, and updating it is a deliberate edit.
-EXPECTED_BROKERS = 12
+EXPECTED_BROKERS = 13
 
 
 def _read(name: str) -> str:
