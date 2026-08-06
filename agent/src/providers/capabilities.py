@@ -150,6 +150,16 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
         capture_reasoning=True,
         native_adapter_package="langchain-deepseek",
     ),
+    # xAI is plain OpenAI-compatible. Mini-tier Grok models stream the chain
+    # of thought as ``reasoning_content`` (DeepSeek convention); Grok-4-class
+    # models hide it entirely, making capture a no-op. Reasoning is never
+    # replayed on assistant turns.
+    "xai": ProviderCapabilities(
+        "xai",
+        "XAI_API_KEY",
+        "XAI_BASE_URL",
+        capture_reasoning=True,
+    ),
     "siliconflow-cn": ProviderCapabilities(
         "siliconflow-cn",
         "SILICONFLOW_API_KEY",

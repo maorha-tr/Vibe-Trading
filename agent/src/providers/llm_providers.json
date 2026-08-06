@@ -9,6 +9,15 @@
     "api_key_required": true
   },
   {
+    "name": "xai",
+    "label": "xAI / Grok",
+    "api_key_env": "XAI_API_KEY",
+    "base_url_env": "XAI_BASE_URL",
+    "default_model": "grok-4.20",
+    "default_base_url": "https://api.x.ai/v1",
+    "api_key_required": true
+  },
+  {
     "name": "requesty",
     "label": "Requesty",
     "api_key_env": "REQUESTY_API_KEY",
