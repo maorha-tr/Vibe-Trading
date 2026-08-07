@@ -153,7 +153,9 @@ def test_empty_model_response_returns_specific_reason(
 
     assert result["status"] == "failed"
     assert result["reason"].startswith("empty_model_response")
-    assert "iteration 1" in result["reason"]
+    # Iterations 1 and 2 are consumed by the bounded empty-response retries;
+    # the third empty response exhausts them and terminates the run.
+    assert "iteration 3" in result["reason"]
     assert result["iterations"] >= 1
     assert result["max_iterations"] == 3
 
@@ -258,7 +260,9 @@ def test_session_service_renders_meaningful_error_from_result(tmp_path: Path) ->
 
     assert ui_error != "unknown"
     assert "empty_model_response" in ui_error
-    assert "iteration 1" in ui_error
+    # max_iter=2 ends the run while empty-response retries are still pending;
+    # the recorded glitch (last seen at iteration 2) must still win the reason.
+    assert "iteration 2" in ui_error
 
 
 def test_usage_metadata_is_persisted_to_run_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

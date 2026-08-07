@@ -62,6 +62,9 @@ COLLAPSE_TAIL = 500
 
 TAIL_TOKEN_BUDGET = 20_000
 
+#: Bounded retries when a provider returns neither content nor tool calls.
+_MAX_EMPTY_RESPONSE_RETRIES = 2
+
 
 def _override(name: str):
     """Return a monkeypatched module-level override if present."""
@@ -642,6 +645,7 @@ class AgentLoop:
         consecutive_content_filter_count = 0
         content_filter_circuit_breaker = False
         empty_model_response_iter: int | None = None
+        empty_response_retries = 0
         llm_usage_summary = _new_llm_usage_summary(self.llm)
         last_response_model: str | None = None
         goal_continuations = 0
@@ -885,9 +889,39 @@ class AgentLoop:
                 # Not filtered — reset the consecutive-skip counter.
                 consecutive_content_filter_count = 0
 
+                # Any productive response clears the empty-response record so a
+                # later max-iterations exit is not misattributed to the glitch.
+                if response.has_tool_calls or (response.content or ""):
+                    empty_model_response_iter = None
+
                 if not response.has_tool_calls:
                     final_content = response.content or ""
                     if not final_content:
+                        # Some providers occasionally emit a turn with neither
+                        # content nor tool calls (e.g. a reasoning model whose
+                        # hidden thinking consumed the turn). Nudge and retry a
+                        # bounded number of times before failing the run.
+                        if empty_response_retries < _MAX_EMPTY_RESPONSE_RETRIES:
+                            empty_response_retries += 1
+                            empty_model_response_iter = iteration
+                            trace.write(
+                                {
+                                    "type": "empty_model_response_retry",
+                                    "iter": current_iter,
+                                    "attempt": empty_response_retries,
+                                }
+                            )
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "Your last message was empty. Continue now: "
+                                        "either produce the final answer as text or "
+                                        "make the next tool call."
+                                    ),
+                                }
+                            )
+                            continue
                         empty_model_response_iter = iteration
                         trace.write(
                             {

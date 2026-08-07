@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 from backtest.loaders import eastmoney_client, sec_edgar_client, yahoo_client
@@ -134,6 +135,31 @@ class SymbolSearchTool(BaseTool):
         candidates.extend(yh_hits)
 
         merged = _merge_candidates(candidates)
+
+        # A venue-qualified query ("SOXL.US") is the disambiguation step the
+        # identity gate asks for after an ambiguous shortlist, but upstream
+        # suggest endpoints only match the bare ticker and return nothing for
+        # the qualified form. Retry with the base ticker and keep only the
+        # exact qualified symbol so the resolver can lock a single candidate.
+        if not merged and "." in query:
+            base = query.split(".", 1)[0].strip()
+            if base and base.lower() != query.lower():
+                retry_hits: List[Dict[str, Any]] = []
+                em_retry, em_status = _search_eastmoney(base)
+                retry_hits.extend(em_retry)
+                yh_retry, yh_status = _search_yahoo(base)
+                retry_hits.extend(yh_retry)
+                want = _comparable_symbol(query)
+                exact = [
+                    hit
+                    for hit in _merge_candidates(retry_hits)
+                    if _comparable_symbol(str(hit.get("symbol") or "")) == want
+                ]
+                if exact:
+                    merged = exact
+                    sources["eastmoney"] = em_status
+                    sources["yahoo"] = yh_status
+
         merged, sources["sec_edgar"] = _enrich_us_cik(merged)
         if sources["sec_edgar"] == _NO_US:
             del sources["sec_edgar"]
@@ -153,6 +179,11 @@ class SymbolSearchTool(BaseTool):
             },
             ensure_ascii=False,
         )
+
+
+def _comparable_symbol(symbol: str) -> str:
+    """Normalize a symbol for exact venue-qualified comparison."""
+    return re.sub(r"[^a-z0-9]", "", symbol.casefold())
 
 
 def _clamp_limit(value: Any) -> int:

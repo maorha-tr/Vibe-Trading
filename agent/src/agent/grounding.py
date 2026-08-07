@@ -417,6 +417,23 @@ class ToolAuthorization:
 
     def error_payload(self, tool_name: str, identity: Mapping[str, Any]) -> str:
         """Render a blocked tool call as a normal structured error result."""
+        identity_state = dict(identity)
+        if str(identity_state.get("status") or "") == "ambiguous":
+            # Repeating the same broad query re-yields the same shortlist and
+            # never locks; the model must narrow to one candidate.
+            required_action = (
+                "The last search returned multiple candidates, so no identity is "
+                "locked; repeating the same query cannot lock one. Pick ONE "
+                "candidate from that shortlist, call search_symbol again with its "
+                "full venue-qualified symbol as the query (alone in its own "
+                "assistant tool turn), wait for the result, then call data tools "
+                "with exactly that symbol."
+            )
+        else:
+            required_action = (
+                "Call search_symbol in a separate assistant tool turn, wait for "
+                "its result, then reuse the exact locked symbol and venue."
+            )
         return json.dumps(
             {
                 "status": "error",
@@ -424,11 +441,8 @@ class ToolAuthorization:
                 "tool": tool_name,
                 "message": self.message or "Tool call blocked by identity gate",
                 "symbols": list(self.symbols),
-                "identity": dict(identity),
-                "required_action": (
-                    "Call search_symbol in a separate assistant tool turn, wait for "
-                    "its result, then reuse the exact locked symbol and venue."
-                ),
+                "identity": identity_state,
+                "required_action": required_action,
             },
             ensure_ascii=False,
         )

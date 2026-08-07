@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from src.config.accessor import get_env_config
+from src.providers.capabilities import get_provider_capabilities
 from src.providers.content_filter import is_content_filter_triggered
 from src.providers.llm import build_llm
 
@@ -295,6 +296,19 @@ class ChatLLM:
             configured_model=configured_model,
             reasoning_effort=runtime_cfg.langchain_reasoning_effort.strip().lower(),
         )
+        caps = get_provider_capabilities(
+            self.runtime_snapshot.provider, configured_model
+        )
+        # One tool call per assistant turn for providers that batch a symbol
+        # resolver with its dependent data tools (rejected by the identity gate).
+        self._tool_bind_kwargs: Dict[str, Any] = (
+            {"parallel_tool_calls": False} if caps.single_tool_call_batch else {}
+        )
+
+    def _bind_tools(self, tools: List[Dict[str, Any]]) -> Any:
+        """Bind tool definitions with provider-scoped binding options."""
+        # getattr: test stubs construct ChatLLM without running __init__.
+        return self._llm.bind_tools(tools, **getattr(self, "_tool_bind_kwargs", {}))
 
     def chat(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, timeout: Optional[int] = None) -> LLMResponse:
         """Call the LLM synchronously.
@@ -307,7 +321,7 @@ class ChatLLM:
         Returns:
             LLMResponse.
         """
-        llm = self._llm.bind_tools(tools) if tools else self._llm
+        llm = self._bind_tools(tools) if tools else self._llm
         config = {"timeout": timeout} if timeout else {}
         ai_message = llm.invoke(messages, config=config)
         return self._parse_response(ai_message)
@@ -341,7 +355,7 @@ class ChatLLM:
             Parsed ``LLMResponse``.
         """
         try:
-            llm = self._llm.bind_tools(tools) if tools else self._llm
+            llm = self._bind_tools(tools) if tools else self._llm
             config = {"timeout": timeout} if timeout else {}
             accumulated = None
             pending_text = ""

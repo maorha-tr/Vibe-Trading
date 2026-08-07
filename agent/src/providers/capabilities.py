@@ -28,6 +28,11 @@ class ProviderCapabilities:
             be normalized to ``""`` for strict providers.
         openrouter_reasoning_body: Whether ``extra_body.reasoning`` is a valid
             OpenRouter request option.
+        single_tool_call_batch: Whether tool binding must request
+            ``parallel_tool_calls=False``. For models that aggressively batch
+            a symbol resolver together with data tools in one assistant turn,
+            which the grounding identity gate rejects by design (a resolver
+            result cannot be consumed by calls in its own batch).
         default_headers: Provider-scoped headers passed to ChatOpenAI.
         native_adapter_package: Optional native adapter package to report.
     """
@@ -40,6 +45,7 @@ class ProviderCapabilities:
     gemini_thought_signatures: bool = False
     normalize_assistant_content: bool = False
     openrouter_reasoning_body: bool = False
+    single_tool_call_batch: bool = False
     default_headers: Mapping[str, str] = field(default_factory=dict)
     native_adapter_package: Optional[str] = None
 
@@ -153,12 +159,16 @@ _PROVIDERS: dict[str, ProviderCapabilities] = {
     # xAI is plain OpenAI-compatible. Mini-tier Grok models stream the chain
     # of thought as ``reasoning_content`` (DeepSeek convention); Grok-4-class
     # models hide it entirely, making capture a no-op. Reasoning is never
-    # replayed on assistant turns.
+    # replayed on assistant turns. Grok batches symbol resolution together
+    # with dependent data tools in one turn — the grounding identity gate
+    # rejects that by design and Grok then loops on the same batch, so tool
+    # binding requests one tool call per assistant turn.
     "xai": ProviderCapabilities(
         "xai",
         "XAI_API_KEY",
         "XAI_BASE_URL",
         capture_reasoning=True,
+        single_tool_call_batch=True,
     ),
     "siliconflow-cn": ProviderCapabilities(
         "siliconflow-cn",

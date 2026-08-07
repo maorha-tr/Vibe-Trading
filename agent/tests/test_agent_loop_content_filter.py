@@ -166,18 +166,21 @@ def test_multiple_content_filter_hits(
 def test_empty_content_no_filter_still_breaks(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Empty content with content_filter_triggered=False triggers existing break."""
+    """Empty content with content_filter_triggered=False fails after retries."""
     llm = _EmptyResponseLoopLLM()
 
     result = _run(monkeypatch, tmp_path, llm)
 
     assert result["status"] == "failed"
     assert "empty_model_response" in result.get("reason", "")
-    assert llm.calls == 1
+    # One original attempt plus the two bounded empty-response retries.
+    assert llm.calls == 3
 
     trace = _read_trace(result["run_dir"])
     empty_entries = [e for e in trace if e.get("type") == "empty_model_response"]
     assert len(empty_entries) == 1
+    retry_entries = [e for e in trace if e.get("type") == "empty_model_response_retry"]
+    assert len(retry_entries) == 2
     filter_entries = [e for e in trace if e.get("type") == "content_filter_skipped"]
     assert len(filter_entries) == 0
 
