@@ -310,6 +310,29 @@ class ChatLLM:
         # getattr: test stubs construct ChatLLM without running __init__.
         return self._llm.bind_tools(tools, **getattr(self, "_tool_bind_kwargs", {}))
 
+    def _enforce_single_tool_call(self, response: LLMResponse) -> LLMResponse:
+        """Drop extra tool calls for providers that ignore the request option.
+
+        ``parallel_tool_calls=False`` is advisory: xAI accepts the field and
+        still emits several calls in one assistant message. Callers that
+        depend on one call per turn (the identity gate's "a resolver result
+        from this same batch cannot be consumed" rule) need it enforced, and
+        keeping only the first call is safe — the model re-requests the rest
+        on the next turn, now able to consume this call's result.
+        """
+        if not getattr(self, "_tool_bind_kwargs", {}):
+            return response
+        if len(response.tool_calls) > 1:
+            dropped = [call.name for call in response.tool_calls[1:]]
+            logger.debug(
+                "provider returned %d parallel tool calls; keeping %r, deferring %r",
+                len(response.tool_calls),
+                response.tool_calls[0].name,
+                dropped,
+            )
+            response.tool_calls = response.tool_calls[:1]
+        return response
+
     def chat(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, timeout: Optional[int] = None) -> LLMResponse:
         """Call the LLM synchronously.
 
@@ -324,7 +347,7 @@ class ChatLLM:
         llm = self._bind_tools(tools) if tools else self._llm
         config = {"timeout": timeout} if timeout else {}
         ai_message = llm.invoke(messages, config=config)
-        return self._parse_response(ai_message)
+        return self._enforce_single_tool_call(self._parse_response(ai_message))
 
     def stream_chat(
         self,
@@ -391,7 +414,7 @@ class ChatLLM:
                     "non-streaming invoke."
                 )
                 return self.chat(messages, tools=tools, timeout=timeout)
-            response = self._parse_response(accumulated)
+            response = self._enforce_single_tool_call(self._parse_response(accumulated))
             if pending_text and not (response.has_tool_calls and response.content == ""):
                 on_text_chunk(pending_text)
             return response

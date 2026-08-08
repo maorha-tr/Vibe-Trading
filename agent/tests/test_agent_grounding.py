@@ -549,6 +549,64 @@ def test_ambiguous_resolution_keeps_consumers_blocked(tmp_path: Path) -> None:
     assert json.loads(messages[-1]["content"])["error_code"] == "identity_conflict"
 
 
+def test_ambiguous_peer_lookup_does_not_block_a_locked_symbol(tmp_path: Path) -> None:
+    """A peer's unresolved shortlist must not revoke an already-locked symbol.
+
+    Looking up a comparison ticker is normal mid-analysis. Because
+    ``identity_status`` aggregates every record, an ambiguous shortlist for the
+    peer used to block consumers for the symbol that was cleanly locked first,
+    stranding the run in a resolve/blocked loop.
+    """
+    resolver = _ResolverTool(_resolver_payload(symbol="AAA.US", query="AAA"))
+    market = _MarketTool(_market_payload(symbol="AAA.US"))
+    registry = ToolRegistry()
+    for tool in (resolver, market):
+        registry.register(tool)
+    agent = AgentLoop(registry=registry, llm=SimpleNamespace(), max_iterations=5)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    agent.memory.run_dir = str(run_dir)
+    agent._grounding = GroundingLedger(run_dir=run_dir, user_message="compare AAA to peers")
+    trace = TraceWriter(run_dir)
+    messages: list[dict[str, Any]] = []
+    react_trace: list[dict[str, Any]] = []
+
+    agent._process_tool_calls(
+        [_tool_call("resolve", "search_symbol", query="AAA")],
+        ContextBuilder, messages, trace, react_trace, 1,
+    )
+    assert agent._grounding.identity_status == "locked"
+
+    # The peer lookup resolves to several venues and stays ambiguous.
+    resolver.result = _resolver_payload(
+        candidates=[
+            {"symbol": "PEER.US", "name": "Peer Holdings", "source": "yahoo"},
+            {"symbol": "PEER.HK", "name": "Peer Group", "source": "eastmoney"},
+        ],
+        query="PEER",
+    )
+    agent._process_tool_calls(
+        [_tool_call("resolve_peer", "search_symbol", query="PEER")],
+        ContextBuilder, messages, trace, react_trace, 2,
+    )
+    assert agent._grounding.identity_status == "ambiguous"
+
+    agent._process_tool_calls(
+        [_tool_call("prices", "get_market_data", codes=["AAA.US"])],
+        ContextBuilder, messages, trace, react_trace, 3,
+    )
+    assert market.calls == 1, "locked symbol must survive a peer's ambiguity"
+
+    # The peer itself is still unusable until it is narrowed to one candidate.
+    agent._process_tool_calls(
+        [_tool_call("peer_prices", "get_market_data", codes=["PEER.US"])],
+        ContextBuilder, messages, trace, react_trace, 4,
+    )
+    trace.close()
+    assert market.calls == 1
+    assert json.loads(messages[-1]["content"])["error_code"] == "identity_conflict"
+
+
 def test_final_numeric_gate_rejects_known_trace_contradiction(tmp_path: Path) -> None:
     """Known 1.11-1.18 evidence cannot become 0.88-0.91 in the answer."""
     ledger = GroundingLedger(

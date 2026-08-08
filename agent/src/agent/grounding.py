@@ -44,6 +44,10 @@ _PRIVATE_COMPANY_SKILL_NAMES = {
 }
 _BARE_US_TICKER_TOOLS = {
     "cancel_equity_order",
+    # SEC N-PORT lookups key off the bare U.S. ticker; a ``.US``-suffixed
+    # symbol is rejected by the fund index, so demanding the canonical form
+    # here would leave the tool with no callable symbol at all.
+    "etf_holdings",
     "get_equity_quotes",
     "get_options_chain",
     "get_sec_filings",
@@ -69,6 +73,11 @@ _SYMBOL_ARGUMENT_KEYS = {
 # many candidates by design. Requiring a locked identity there stalls every
 # discovery task before it can load a screening skill, which is #955.
 _RESOLUTION_INCOMPLETE_STATUSES = {"unresolved", "conflicting", "invalidated"}
+# Aggregate states that describe *some* record rather than a contradiction, so a
+# consumer call may still proceed when every symbol it names owns a locked
+# record of its own. ``conflicting``/``invalidated`` are deliberately excluded:
+# contradicted identity evidence halts the whole run.
+_SYMBOL_SCOPED_STATUSES = {"ambiguous", "unresolved"}
 _PRICE_FIELDS = {"open", "high", "low", "close", "adj_close", "price"}
 _TIMESTAMP_FIELDS = ("trade_date", "date", "datetime", "timestamp", "time", "index")
 _MAX_GENERIC_EVIDENCE = 2_000
@@ -594,6 +603,17 @@ class GroundingLedger:
         self._buffer_output = True
         authorized = {_normalize_symbol(item) for item in batch_authorized_symbols}
         frozen_status = batch_identity_status or self.identity_status
+        # ``identity_status`` aggregates every record in the run, so a shortlist
+        # left ambiguous for one ticker (a peer looked up for comparison, say)
+        # would otherwise block calls for a different ticker that owns a clean
+        # locked record. Judge those calls on their own symbols: each requested
+        # symbol must still match a symbol locked before this batch started, and
+        # contradicted state stays a hard stop for everything.
+        if frozen_status in _SYMBOL_SCOPED_STATUSES and authorized and all(
+            self._match_authorized_symbol(tool_name, symbol, authorized) is not None
+            for symbol in symbols
+        ):
+            frozen_status = "locked"
         if frozen_status != "locked" or not authorized:
             return ToolAuthorization(
                 allowed=False,
