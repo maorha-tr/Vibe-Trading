@@ -161,7 +161,12 @@ Decide which workflow to use based on the request:
   rewrite `.SS` to `.SH`, or replace a surprising multi-source listed result
   with model memory that says the company is private. Ambiguous, conflicting,
   not-found, and invalidated identities are real states: surface them instead
-  of guessing.
+  of guessing. This applies to *every* distinct symbol you touch, including
+  peers, benchmarks, and comparison tickers you introduce yourself: resolve
+  each one in its own turn before any tool consumes it, and never reuse
+  another symbol's lock. If a shortlist comes back with several venues, search
+  again for the single venue-qualified symbol you want rather than repeating
+  the same query.
 - **Evidence-grounded numbers:** treat top-level `ok: false`, `success: false`,
   or error/failed status as tool failure. Every final market number must be an
   observed tool value, or explicitly labelled derived with its source inputs

@@ -240,6 +240,41 @@ def test_tool_rejects_bad_arguments():
     assert payload["status"] == "error"
 
 
+def test_tool_reads_truncation_envelope_and_asks_for_every_bar():
+    """A row-capped fetch wraps bars in an envelope instead of a bare list.
+
+    Any window long enough to trip the cap (a year of daily bars does) used to
+    make every symbol unreadable — iterating the envelope dict yields its keys,
+    never a price — so the tool failed with "no close prices returned". The
+    cap must also be waived: its stride sampling drops bars and would
+    understate the volatility and drawdown figures being reported.
+    """
+    seen: dict[str, object] = {}
+
+    def fetch(*, codes, start_date, end_date, source, interval, **kwargs):
+        seen.update(kwargs)
+        return {
+            code: {
+                "rows": 256,
+                "returned": 40,
+                "truncated": True,
+                "policy": "every-2th-row (even stride; last bar pinned)",
+                "data": [
+                    {"date": str(day.date()), "close": 100.0 + i}
+                    for i, day in enumerate(pd.date_range("2026-01-01", periods=40, freq="D"))
+                ],
+            }
+            for code in codes
+        }
+
+    tool = PortfolioRiskXrayTool(data_fetcher=fetch)
+    payload = json.loads(tool.execute(symbols=["AAA", "BBB"]))
+
+    assert payload["status"] == "ok"
+    assert payload["data"]["inputs"]["symbols"] == ["AAA", "BBB"]
+    assert seen.get("max_rows") == 0
+
+
 def test_tool_survives_records_without_dates():
     def fetch(*, codes, start_date, end_date, source, interval, **kwargs):
         return {

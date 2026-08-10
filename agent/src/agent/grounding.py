@@ -636,12 +636,19 @@ class GroundingLedger:
             if self._match_authorized_symbol(tool_name, symbol, authorized) is None
         )
         if mismatched:
+            # Name the locked symbols: a mismatch is usually a symbol nobody has
+            # resolved yet (a peer pulled in for comparison), and "reuse the
+            # locked symbol" alone reads as "swap in the wrong instrument".
+            locked = ", ".join(sorted(authorized)) or "(none)"
             return ToolAuthorization(
                 allowed=False,
                 error_code="identity_mismatch",
                 message=(
-                    "Consumer symbol/venue differs from the locked resolver identity; "
-                    "silent suffix or exchange rewrites are forbidden."
+                    f"{', '.join(mismatched)} is not a locked identity; silent suffix or "
+                    f"exchange rewrites are forbidden. Locked so far: {locked}. If you "
+                    "meant a different instrument, resolve it first — call search_symbol "
+                    "with that symbol in its own assistant tool turn, then retry this "
+                    "call unchanged. Do not substitute an already-locked symbol."
                 ),
                 symbols=mismatched,
             )

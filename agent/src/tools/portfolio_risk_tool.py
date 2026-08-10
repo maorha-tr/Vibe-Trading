@@ -112,6 +112,11 @@ class PortfolioRiskXrayTool(BaseTool):
             end_date=end_date,
             source=source,
             interval=interval,
+            # Volatility, drawdown and correlation are computed from the bar
+            # series itself, so the row cap must not apply: its stride sampling
+            # ("every-2th-row") drops bars and would silently understate the
+            # very risk figures this tool exists to report.
+            max_rows=0,
         )
         closes = self._closes_frame(raw, symbols)
         unresolved = raw.get("_unresolved") if isinstance(raw, Mapping) else None
@@ -167,6 +172,12 @@ class PortfolioRiskXrayTool(BaseTool):
         series: dict[str, pd.Series] = {}
         for sym in symbols:
             records = raw.get(sym)
+            # A capped fetch wraps the bars in a truncation envelope
+            # ({"rows", "returned", "truncated", "data": [...]}) instead of
+            # returning the bare list; iterating that dict yields its keys and
+            # finds no prices at all.
+            if isinstance(records, Mapping):
+                records = records.get("data")
             if not records:
                 continue
             times: list[Any] = []
