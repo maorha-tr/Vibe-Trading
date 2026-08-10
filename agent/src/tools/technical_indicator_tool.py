@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -30,6 +31,45 @@ _SMA_PERIODS = (20, 50, 200)
 _EMA_PERIOD = 20
 _DEFAULT_LOOKBACK = 200
 _MAX_LOOKBACK = 500
+#: Bar-date keys used by the loaders, in the order they are preferred.
+_DATE_KEYS = ("trade_date", "date", "datetime", "timestamp", "time")
+
+
+def _close_series(payload: Any) -> pd.Series | None:
+    """Extract a float close-price series from any market-data payload shape.
+
+    ``fetch_market_data`` hands back a list of bar records per symbol, or a
+    truncation envelope wrapping that list once the row cap applies. Older
+    call sites assumed a DataFrame, so an unguarded ``.empty`` crashed the
+    tool outright on the shapes actually returned.
+    """
+    if payload is None:
+        return None
+    if isinstance(payload, Mapping) and "data" in payload:
+        payload = payload.get("data")
+    if isinstance(payload, pd.DataFrame):
+        for key in ("close", "Close", "CLOSE", "adj_close"):
+            if key in payload.columns:
+                return pd.to_numeric(payload[key], errors="coerce").dropna()
+        return None
+    if isinstance(payload, Mapping):
+        for key in ("close", "Close", "CLOSE", "adj_close"):
+            if key in payload:
+                return pd.to_numeric(pd.Series(payload[key]), errors="coerce").dropna()
+        return None
+    if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes)):
+        rows = [row for row in payload if isinstance(row, Mapping)]
+        prices = [row.get("close", row.get("Close")) for row in rows]
+        if not prices:
+            return None
+        # Keep the bar dates as the index so the reported as-of is a real date
+        # rather than a row number.
+        dates = [
+            next((row[key] for key in _DATE_KEYS if key in row), None) for row in rows
+        ]
+        index = pd.Index(dates) if all(date is not None for date in dates) else None
+        return pd.to_numeric(pd.Series(prices, index=index), errors="coerce").dropna()
+    return None
 
 
 def _compute_sma(close: pd.Series, period: int) -> float | None:
@@ -166,30 +206,27 @@ class TechnicalIndicatorTool(BaseTool):
                 start_date=start_date,
                 end_date=end_date,
                 interval=interval,
-                max_rows=lookback,
+                # Never let the row cap sample the series: its stride sampling
+                # drops bars, and an SMA-20 over every-other-day bars is not an
+                # SMA-20. The tail is trimmed to ``lookback`` below instead.
+                max_rows=0,
             )
         except Exception as exc:
             logger.debug("fetch_market_data failed for %s: %s", symbol, exc)
             return json.dumps({"ok": False, "error": f"Failed to fetch data: {exc}"})
 
-        df = data.get(symbol)
-        if df is None or df.empty:
+        payload = data.get(symbol)
+        if isinstance(payload, Mapping) and "data" in payload:
+            payload = payload.get("data")
+        if payload is None or len(payload) == 0:
             return json.dumps({"ok": False, "error": f"No data returned for {symbol}"})
 
-        close = df.get("close") if isinstance(df, pd.DataFrame) else None
-        if close is None:
-            # Some loaders return a dict-like structure; try common key names.
-            if hasattr(df, "to_dict"):
-                d = df.to_dict() if callable(df.to_dict) else dict(df)
-                for key in ("close", "Close", "CLOSE", "adj_close"):
-                    if key in d:
-                        close = pd.Series(d[key])
-                        break
+        close = _close_series(payload)
         if close is None:
             return json.dumps({"ok": False, "error": "No close price column in data"})
-
-        if not isinstance(close, pd.Series):
-            close = pd.Series(close)
+        if close.empty:
+            return json.dumps({"ok": False, "error": f"No data returned for {symbol}"})
+        close = close.iloc[-lookback:]
 
         # ── Compute indicators ────────────────────────────────────────────
         indicators: dict[str, Any] = {

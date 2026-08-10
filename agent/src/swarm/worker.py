@@ -403,6 +403,7 @@ def run_worker(
     data_tool_calls = 0
     content_filter_count = 0
     consecutive_content_filter_count = 0
+    contract_nudges = 0
 
     for iteration in range(max_iterations):
         # Microcompact: clear old tool results to prevent token bloat
@@ -624,6 +625,33 @@ def run_worker(
                 data_tool_calls=data_tool_calls,
             )
             if reason:
+                # Announcing a plan and stopping is a recoverable slip, not a
+                # dead end: the worker still has iterations left and the whole
+                # deliverable is lost if the run ends here. Say what is missing
+                # and let it execute before failing the contract.
+                if (
+                    contract_nudges < _MAX_CONTRACT_NUDGES
+                    and iteration < max_iterations - 1
+                    and not _is_terminal_contract_breach(reason)
+                ):
+                    contract_nudges += 1
+                    _emit(
+                        event_callback,
+                        "worker_contract_nudge",
+                        agent_id,
+                        task_id,
+                        {"iteration": iteration, "reason": reason, "attempt": contract_nudges},
+                    )
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            f"Your last message did not meet the output contract: {reason}. "
+                            "Do not restate the plan or ask permission. Execute it now — "
+                            "make the tool calls you listed, then write the finished "
+                            "analysis and its conclusion to report.md."
+                        ),
+                    })
+                    continue
                 _emit(event_callback, "worker_incomplete", agent_id, task_id,
                       {"iterations": iteration + 1, "reason": reason})
                 return WorkerResult(
@@ -836,6 +864,20 @@ _UNPARSED_TOOL_MARKERS = (
     "tool\u2581sep",
 )
 _FABRICATION_MARKERS = ("mock data", "without actual data", "fabricated data", "placeholder data")
+#: How many times a worker may be told to execute its own plan before the
+#: contract failure stands.
+_MAX_CONTRACT_NUDGES = 2
+
+#: Contract breaches a retry cannot help: the worker is repeating provider
+#: markup or admitting fabrication, so re-prompting only burns iterations.
+_TERMINAL_CONTRACT_REASONS = ("unparsed tool-call markup", "explicitly fabricated")
+
+
+def _is_terminal_contract_breach(reason: str) -> bool:
+    """Return whether a contract failure is worth re-prompting the worker for."""
+    return any(marker in reason for marker in _TERMINAL_CONTRACT_REASONS)
+
+
 _PLAN_PREFIXES = (
     "# phase 1", "## phase 1", "### phase 1",
     "phase 1 \u2014 plan", "phase 1 - plan", "phase 1: plan",

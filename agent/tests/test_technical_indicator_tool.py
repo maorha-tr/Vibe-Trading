@@ -192,6 +192,44 @@ class TestTechnicalIndicatorToolIntegration:
         assert result["ok"] is False
         assert "No data" in result["error"]
 
+    def test_execute_reads_bar_records_and_truncation_envelope(self, monkeypatch):
+        """The live data layer hands back bar records, not a DataFrame.
+
+        ``fetch_market_data`` returns a list of bar dicts per symbol — wrapped
+        in a truncation envelope once the row cap applies — so the old
+        ``df.empty`` check raised AttributeError and the tool died on every
+        real call. The row cap must also be waived: stride-sampled bars would
+        make an "SMA-20" span 40 calendar days.
+        """
+        dates = pd.date_range("2025-01-01", periods=250, freq="B")
+        bars = [
+            {"trade_date": str(day.date()), "close": 100.0 + i}
+            for i, day in enumerate(dates)
+        ]
+        seen: dict[str, object] = {}
+
+        def fake_fetch(**kwargs):
+            seen.update(kwargs)
+            return {
+                "AAPL": {
+                    "rows": len(bars),
+                    "returned": len(bars),
+                    "truncated": True,
+                    "data": bars,
+                }
+            }
+
+        monkeypatch.setattr(
+            "src.tools.technical_indicator_tool.fetch_market_data", fake_fetch
+        )
+        result = json.loads(TechnicalIndicatorTool().execute(symbol="AAPL"))
+
+        assert result["ok"] is True
+        assert result["latest_close"] == pytest.approx(349.0)
+        assert result["latest_date"] == str(dates[-1].date())
+        assert result["indicators"]["sma_20"] is not None
+        assert seen.get("max_rows") == 0
+
     def test_execute_no_close_column(self, monkeypatch):
         """DataFrame without close column → error."""
         monkeypatch.setattr(

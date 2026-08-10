@@ -251,7 +251,65 @@ class _ScriptedLLM:
         ]
 
     def stream_chat(self, messages, tools=None, timeout=None, on_text_chunk=None):
-        return self._responses.pop(0)
+        # The worker may re-prompt a worker that missed its output contract, so
+        # the script must keep answering instead of running dry mid-run.
+        if len(self._responses) > 1:
+            return self._responses.pop(0)
+        return self._responses[0]
+
+
+class _PlanThenExecuteLLM:
+    """Answers with a plan-only stub first, then a real deliverable."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def stream_chat(self, messages, tools=None, timeout=None, on_text_chunk=None):
+        self.calls += 1
+        if self.calls == 1:
+            return LLMResponse(
+                content=None,
+                tool_calls=[ToolCallRequest(id="call-1", name="market_probe", arguments={})],
+                finish_reason="tool_calls",
+            )
+        if self.calls == 2:
+            return LLMResponse(content=PLAN_STUB, tool_calls=[], finish_reason="stop")
+        return LLMResponse(content=REAL_REPORT, tool_calls=[], finish_reason="stop")
+
+
+def test_plan_only_worker_is_told_to_execute_before_the_contract_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A plan-only turn must cost one nudge, not the whole deliverable.
+
+    Announcing a plan and stopping is recoverable while iterations remain;
+    failing the task outright discards work the other agents already did.
+    """
+    registry = ToolRegistry()
+    registry.register(_ResultTool('{"status": "ok", "data": [1]}'))
+    monkeypatch.setattr(worker_mod, "build_swarm_registry", lambda *a, **k: registry)
+    llm = _PlanThenExecuteLLM()
+    monkeypatch.setattr(worker_mod, "ChatLLM", lambda *a, **k: llm)
+
+    events: list[SwarmEvent] = []
+    result = run_worker(
+        agent_spec=SwarmAgentSpec(
+            id="pm",
+            role="Portfolio Manager",
+            system_prompt="Decide.",
+            tools=["market_probe"],
+            max_iterations=5,
+        ),
+        task=SwarmTask(id="task", agent_id="pm", prompt_template="Decide on the trade."),
+        upstream_summaries={},
+        user_vars={},
+        run_dir=tmp_path,
+        event_callback=events.append,
+    )
+
+    assert result.status == "completed"
+    assert REAL_REPORT[:40] in result.summary
+    assert [e for e in events if e.type == "worker_contract_nudge"]
 
 
 @pytest.mark.parametrize(
