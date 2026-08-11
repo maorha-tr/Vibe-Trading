@@ -607,6 +607,34 @@ def test_ambiguous_peer_lookup_does_not_block_a_locked_symbol(tmp_path: Path) ->
     assert json.loads(messages[-1]["content"])["error_code"] == "identity_conflict"
 
 
+def test_structured_report_is_not_rejected_for_its_own_formatting(tmp_path: Path) -> None:
+    """Section numbers, indicator periods and volume are not price claims.
+
+    A normal analyst report ("## 1. Price snapshot", "price is above
+    SMA20/50/200", "volume = 0") was being read as quoting the prices 1, 50,
+    200 and 0 and rejected against the observed OHLC range, so a correct
+    answer could never survive the gate — the user only ever saw the refusal.
+    A heading naming the symbol also scopes the bullets beneath it.
+    """
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="analyse 562500.SS")
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": ["562500.SS"], "source": "auto"},
+        result=_market_payload(),
+        call_id="prices",
+        success=True,
+    )
+
+    verdict = ledger.validate_final_answer(
+        "## 1. 562500.SS price snapshot (Yahoo, CNY)\n\n"
+        "- The observed close on 2026-06-24 is 1.171 and the open is 1.137.\n"
+        "- Price sits above SMA20/50/200 and RSI-14 is 61.\n"
+        "- The last bar reported volume = 0, so treat it as unconfirmed.\n"
+    )
+
+    assert verdict.valid is True, verdict.issues
+
+
 def test_final_numeric_gate_rejects_known_trace_contradiction(tmp_path: Path) -> None:
     """Known 1.11-1.18 evidence cannot become 0.88-0.91 in the answer."""
     ledger = GroundingLedger(

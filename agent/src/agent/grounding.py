@@ -49,6 +49,10 @@ _BARE_US_TICKER_TOOLS = {
     # here would leave the tool with no callable symbol at all.
     "etf_holdings",
     "get_equity_quotes",
+    # 13F holder lookups resolve through the SEC ticker/CUSIP index, which
+    # only knows bare U.S. tickers — 'TSLA.US' is rejected there, so requiring
+    # the canonical form leaves no callable symbol.
+    "get_institutional_holdings",
     "get_options_chain",
     "get_sec_filings",
     "get_stock_profile",
@@ -177,6 +181,37 @@ _DERIVATION_RE = re.compile(
 _NUMBER_RE = re.compile(
     r"(?<![A-Za-z0-9_])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
     r"(?![A-Za-z0-9_])"
+)
+# A section number is not a quotation. "## 1. Price & technical snapshot" and
+# "3) Entry levels" both put an ordinal directly in front of price vocabulary,
+# and the bare 1 or 3 was being compared against the OHLC range.
+_SECTION_ORDINAL_RE = re.compile(r"^\s{0,3}(?:[#>*\-]+\s*)*(?:\*\*)?\d+(?:\.\d+)*[.)]?(?=\s|\*|$)")
+# Indicator windows are periods, not prices: SMA20/50/200, RSI-14, MACD(12,26,9),
+# Bollinger 20. They sit next to the word "price" constantly.
+_INDICATOR_WINDOW_RE = re.compile(
+    # No trailing \b: the period is usually glued to the name ("SMA20"), which
+    # is exactly where a word boundary cannot exist.
+    r"\b(?:sma|ema|wma|rsi|macd|atr|adx|cci|kdj|boll(?:inger)?|bb|dmi|ma|[+\-]?di)"
+    r"\s*[-_(（]?\s*\d{1,4}(?:\s*[/,，]\s*\d{1,4})*\s*[)）]?",
+    re.IGNORECASE,
+)
+# Oscillator readings are not quoted in price units — an RSI of 61 is not 61
+# dollars — yet they share a sentence with the close constantly. Moving
+# averages and Bollinger bands are deliberately excluded: those DO read as
+# price levels and must stay checkable.
+_OSCILLATOR_READING_RE = re.compile(
+    r"\b(?:rsi|macd|adx|cci|kdj|dmi|[+\-]?di|stoch(?:astic)?|williams\s*%?r"
+    r"|histogram|signal\s+line|macd\s+line)"
+    r"\s*[-_(（]?\s*(?:\d{1,4}(?:\s*[/,，]\s*\d{1,4})*)?\s*[)）]?"
+    r"\s*(?:is|at|of|reads?|=|:|：|为|是|在)?\s*[-+]?\d[\d,]*(?:\.\d+)?",
+    re.IGNORECASE,
+)
+# Volume/turnover figures share a sentence with the close constantly, and a
+# share count compared against a per-share OHLC range is a category error.
+_VOLUME_FIGURE_RE = re.compile(
+    r"\b(?:volume|turnover|成交量|成交额|量)\b\s*(?:=|:|：|of|is|was|为|是)?\s*"
+    r"[-+]?\d[\d,]*(?:\.\d+)?",
+    re.IGNORECASE,
 )
 _DATE_RE = re.compile(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b")
 # Localized calendar text carries digits that the ISO pattern above leaves
@@ -1392,10 +1427,17 @@ class GroundingLedger:
             for index, line in enumerate(content.splitlines())
             if index in table_lines
         )
+        # A heading that names one canonical symbol scopes the claims beneath
+        # it: "## TSLA.US price & technicals" followed by bullets makes those
+        # bullets unambiguous to a reader, and demanding the ticker again on
+        # every line rejects correctly attributed reports.
+        section_symbol: str | None = None
         for index, line in enumerate(content.splitlines()):
             if index in table_lines or "|" in line:
                 continue
-            line_symbol = self._symbol_for_claim(line, records)
+            if line.lstrip().startswith("#"):
+                section_symbol = self._symbol_for_claim(line, records)
+            line_symbol = self._symbol_for_claim(line, records) or section_symbol
             for segment in _CLAUSE_SEPARATOR_RE.split(line):
                 if not _PRICE_CONTEXT_RE.search(segment):
                     continue
@@ -1709,7 +1751,11 @@ class GroundingLedger:
         Returns:
             Candidate price values, in order of appearance.
         """
-        masked = _CANONICAL_SYMBOL_RE.sub(" ", text)
+        masked = _SECTION_ORDINAL_RE.sub(" ", text)
+        masked = _OSCILLATOR_READING_RE.sub(" ", masked)
+        masked = _INDICATOR_WINDOW_RE.sub(" ", masked)
+        masked = _VOLUME_FIGURE_RE.sub(" ", masked)
+        masked = _CANONICAL_SYMBOL_RE.sub(" ", masked)
         masked = _LOCALIZED_DATE_RE.sub(" ", masked)
         masked = _DATE_RE.sub(" ", masked)
         masked = _AGGREGATE_AMOUNT_RE.sub(" ", masked)
