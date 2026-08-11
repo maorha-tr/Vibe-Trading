@@ -646,6 +646,48 @@ def test_real_price_claims_are_still_extracted(segment: str, expected: list) -> 
     assert GroundingLedger._price_anchored_numbers(segment) == expected
 
 
+def test_benchmark_evidence_does_not_make_every_claim_ambiguous(tmp_path: Path) -> None:
+    """Citing a benchmark must not invalidate the report's own prices.
+
+    Pulling SPY for context put a second symbol in evidence, after which every
+    line that did not repeat the ticker was rejected as ambiguous — so a
+    correct write-up on the requested instrument could not pass. Unattributed
+    claims now fall back to the run's primary subject.
+    """
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="analyse 562500.SS")
+    for call_id in ("prices", "prices_again"):
+        ledger.ingest_tool_result(
+            tool_name="get_market_data",
+            arguments={"codes": ["562500.SS"], "source": "auto"},
+            result=_market_payload(),
+            call_id=call_id,
+            success=True,
+        )
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": ["600000.SH"], "source": "auto"},
+        result=_market_payload("600000.SH"),
+        call_id="benchmark",
+        success=True,
+    )
+
+    verdict = ledger.validate_final_answer(
+        "## 562500.SS (Yahoo, CNY) review\n\n"
+        "- The observed close on 2026-06-24 is 1.171.\n"
+        "- Compared with 600000.SH, the move is modest.\n"
+    )
+
+    assert verdict.valid is True, verdict.issues
+
+
+def test_hyphenated_prose_is_not_read_as_a_ticker() -> None:
+    """'the high-USD-300s' is prose, not a crypto pair."""
+    from src.agent.grounding import _CANONICAL_SYMBOL_RE
+
+    assert not _CANONICAL_SYMBOL_RE.findall("grind into the high-USD-300s")
+    assert _CANONICAL_SYMBOL_RE.findall("BTC-USD held up")
+
+
 def test_structured_report_is_not_rejected_for_its_own_formatting(tmp_path: Path) -> None:
     """Section numbers, indicator periods and volume are not price claims.
 

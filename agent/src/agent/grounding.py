@@ -147,7 +147,9 @@ _CANONICAL_SYMBOL_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:"
     r"\d{3,6}\.(?:SH|SZ|BJ|SS|HK|KS|KQ)|"
     r"[A-Z][A-Z0-9&.-]{0,19}\.(?:US|NS|BO|FX)|"
-    r"[A-Z0-9]{2,15}(?:-|/)(?:USDT|USDC|USD|BTC|ETH)|"
+    # Case-sensitive: with IGNORECASE this pair pattern reads ordinary prose
+    # as a ticker — "grind into the high-USD-300s" became the symbol HIGH-USD.
+    r"(?-i:[A-Z0-9]{2,15}(?:-|/)(?:USDT|USDC|USD|BTC|ETH))|"
     r"[A-Z0-9]{2,15}=[FX]"
     r")(?![A-Za-z0-9_])",
     re.IGNORECASE,
@@ -1474,12 +1476,15 @@ class GroundingLedger:
         # bullets unambiguous to a reader, and demanding the ticker again on
         # every line rejects correctly attributed reports.
         section_symbol: str | None = None
+        primary_symbol = self._primary_claim_symbol(records)
         for index, line in enumerate(content.splitlines()):
             if index in table_lines or "|" in line:
                 continue
             if line.lstrip().startswith("#"):
                 section_symbol = self._symbol_for_claim(line, records)
-            line_symbol = self._symbol_for_claim(line, records) or section_symbol
+            line_symbol = (
+                self._symbol_for_claim(line, records) or section_symbol or primary_symbol
+            )
             for segment in _CLAUSE_SEPARATOR_RE.split(line):
                 if not _PRICE_CONTEXT_RE.search(segment):
                     continue
@@ -1505,6 +1510,33 @@ class GroundingLedger:
         if has_price_claim and market_records:
             issues.extend(self._validate_price_provenance(content, market_records))
         return self._dedupe_issues(issues)
+
+    def _primary_claim_symbol(
+        self,
+        records: Sequence[EvidenceRecord],
+    ) -> str | None:
+        """Return the instrument a report is *about*, for unattributed claims.
+
+        A report on one instrument routinely cites a benchmark for context, and
+        that second symbol used to make every line that did not repeat a ticker
+        "ambiguous" — so a correct TSLA write-up was rejected because SPY had
+        also been fetched. The resolver locks the user's subject first, so that
+        identity is the primary one; failing that, a single dominant evidence
+        symbol stands in. Claims that name a symbol are unaffected.
+        """
+        for record in self._identities.values():
+            if record.status == "locked" and record.symbol:
+                return record.symbol
+        counts: dict[str, int] = {}
+        for record in records:
+            if record.symbol:
+                counts[record.symbol] = counts.get(record.symbol, 0) + 1
+        if not counts:
+            return None
+        ranked = sorted(counts.items(), key=lambda item: item[1], reverse=True)
+        if len(ranked) == 1 or ranked[0][1] > ranked[1][1]:
+            return ranked[0][0]
+        return None
 
     @staticmethod
     def _symbol_for_claim(
