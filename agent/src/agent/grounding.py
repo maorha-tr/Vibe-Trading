@@ -174,6 +174,48 @@ _PRICE_CONTEXT_RE = re.compile(
     r"现价|报价|价格|价位)",
     re.IGNORECASE,
 )
+# Prose price vocabulary, reused to anchor a number to an actual quotation.
+_PRICE_WORD = (
+    r"(?:opening|open|high|low|closing|close|price|quote|entry|target|stop|"
+    r"support|resistance|bid|ask|last|开盘价?|最高价?|最低价?|收盘价?|买入价|"
+    r"入场价|目标价|支撑位?|阻力位?|现价|报价|价格|价位)"
+)
+_CURRENCY_MARKER = (
+    r"(?:\$|＄|¥|￥|€|£|USD|CNY|RMB|HKD|EUR|JPY|GBP|美元|港元|港币|人民币)"
+)
+_BARE_NUMBER = r"[-+]?\d[\d,]*(?:\.\d+)?"
+# A number only states a price when it is actually attached to one: carrying a
+# currency marker, or sitting immediately after price vocabulary. Treating
+# every number in a sentence that merely contains the word "price" as a quote
+# rejected ordinary prose — "the 50-day and 200-day averages", "beta ~2.23",
+# "FCF up in 2025", "a ~50-60% vol name" were all read as claimed prices.
+_PRICE_ANCHORED_RE = re.compile(
+    rf"{_CURRENCY_MARKER}\s*(?P<a>{_BARE_NUMBER})"
+    rf"|(?P<b>{_BARE_NUMBER})\s*{_CURRENCY_MARKER}"
+    # The connector may be punctuation, a copula, or the opening bracket of a
+    # derivation ("买入价：(1.141 + 1.137) / 2 = 1.139").
+    rf"|{_PRICE_WORD}\s*(?:是|为|at|of|is|was|=|:|：|~|≈|about|near|around)?\s*"
+    rf"[(（\[【]?\s*(?P<c>{_BARE_NUMBER})"
+    # A stated result is a claim in its own right: "…/ 2 = 1.139". Volume,
+    # oscillator and ratio readings are masked before this runs, so an "="
+    # that survives is quoting a level.
+    rf"|=\s*(?P<d>{_BARE_NUMBER})",
+    re.IGNORECASE,
+)
+# A lookback horizon is not a price: "50-day average", "126d beta", "6 months".
+_HORIZON_RE = re.compile(
+    r"\d[\d,]*(?:\.\d+)?\s*[-–]?\s*(?:day|days|d|week|weeks|w|month|months|mo|"
+    r"year|years|yr|session|sessions|bar|bars|天|日|周|个月|月|年)\b",
+    re.IGNORECASE,
+)
+# Ratios and statistics are unitless: beta, correlation, Sharpe, P/E and friends.
+_RATIO_READING_RE = re.compile(
+    r"\b(?:beta|correlation|corr|sharpe|sortino|r-?squared|r2|ratio|multiple|"
+    r"p/?e|p/?s|p/?b|ev/?ebitda|hhi|kelly)\b[^0-9\n]{0,16}[-+]?\d[\d,]*(?:\.\d+)?x?",
+    re.IGNORECASE,
+)
+# A bare calendar year is not a price.
+_YEAR_RE = re.compile(r"(?<![.\d])(?:19|20)\d{2}(?![.\d])")
 _DERIVATION_RE = re.compile(
     r"(?:\bderived\b|\bcalculated\b|\bformula\b|\bbased on\b|计算|推导|公式|基于)",
     re.IGNORECASE,
@@ -1441,7 +1483,7 @@ class GroundingLedger:
             for segment in _CLAUSE_SEPARATOR_RE.split(line):
                 if not _PRICE_CONTEXT_RE.search(segment):
                     continue
-                values = self._numbers_without_dates_or_percent(segment)
+                values = self._price_anchored_numbers(segment)
                 if not values:
                     continue
                 has_price_claim = True
@@ -1767,6 +1809,54 @@ class GroundingLedger:
                 continue
             try:
                 values.append(float(match.group(0).replace(",", "")))
+            except ValueError:
+                continue
+        return values
+
+    @staticmethod
+    def _price_anchored_numbers(text: str) -> list[float]:
+        """Extract only the numbers in prose that actually quote a price.
+
+        Prose mentions numbers constantly — horizons, ratios, years, indicator
+        periods — and a sentence containing the word "price" does not make all
+        of them quotations. A number counts only when it carries a currency
+        marker or follows price vocabulary directly. Table cells keep the
+        positional extractor: there a bare number IS the quoted field.
+
+        Args:
+            text: One claim segment.
+
+        Returns:
+            Candidate price values, in order of appearance.
+        """
+        masked = _SECTION_ORDINAL_RE.sub(" ", text)
+        masked = _OSCILLATOR_READING_RE.sub(" ", masked)
+        masked = _INDICATOR_WINDOW_RE.sub(" ", masked)
+        masked = _VOLUME_FIGURE_RE.sub(" ", masked)
+        masked = _RATIO_READING_RE.sub(" ", masked)
+        masked = _HORIZON_RE.sub(" ", masked)
+        masked = _CANONICAL_SYMBOL_RE.sub(" ", masked)
+        masked = _LOCALIZED_DATE_RE.sub(" ", masked)
+        masked = _DATE_RE.sub(" ", masked)
+        masked = _YEAR_RE.sub(" ", masked)
+        masked = _AGGREGATE_AMOUNT_RE.sub(" ", masked)
+        masked = _QUANTITY_WITH_UNIT_RE.sub(" ", masked)
+
+        values: list[float] = []
+        for match in _PRICE_ANCHORED_RE.finditer(masked):
+            raw = (
+                match.group("a")
+                or match.group("b")
+                or match.group("c")
+                or match.group("d")
+            )
+            if raw is None:
+                continue
+            tail = masked[match.end() :].lstrip()
+            if tail.startswith(("%", "％")):
+                continue
+            try:
+                values.append(float(raw.replace(",", "")))
             except ValueError:
                 continue
         return values

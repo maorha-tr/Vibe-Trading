@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
+import pytest
+
 from src.agent.context import ContextBuilder
 from src.agent.grounding import GroundingLedger
 from src.agent.loop import AgentLoop, _is_tool_success
@@ -605,6 +607,43 @@ def test_ambiguous_peer_lookup_does_not_block_a_locked_symbol(tmp_path: Path) ->
     trace.close()
     assert market.calls == 1
     assert json.loads(messages[-1]["content"])["error_code"] == "identity_conflict"
+
+
+@pytest.mark.parametrize(
+    "segment",
+    [
+        "Price is well below both the 50-day and 200-day averages",
+        "beta (~2.23 over ~126d) amplifies market moves",
+        "high squeeze risk in a ~50-60% vol name",
+        "FCF up in 2025 as capex fell while price stayed high",
+        "## 1. Price & technical snapshot (as-of 2026-08-10)",
+        "price is above SMA20/50/200 and RSI-14 is 61",
+        "last bar volume = 0 so treat as unconfirmed",
+        "forward P/E = 148 while price is elevated",
+    ],
+)
+def test_prose_numbers_that_are_not_prices_are_not_price_claims(segment: str) -> None:
+    """Horizons, ratios, years, periods and volume are not quotations.
+
+    Every one of these was read as a claimed price and compared against the
+    observed OHLC range, so ordinary analyst prose could not survive the gate.
+    """
+    assert GroundingLedger._price_anchored_numbers(segment) == []
+
+
+@pytest.mark.parametrize(
+    ("segment", "expected"),
+    [
+        ("close $319.69 on heavy volume", [319.69]),
+        ("washout low near **$298**", [298.0]),
+        ("the observed close is 1.137 and open 1.141", [1.137, 1.141]),
+        ("买入价：(1.141 + 1.137) / 2 = 1.139。", [1.141, 1.139]),
+        ("buy price 310.50 with stop 297.38", [310.5, 297.38]),
+    ],
+)
+def test_real_price_claims_are_still_extracted(segment: str, expected: list) -> None:
+    """Currency-marked and price-anchored numbers must stay checkable."""
+    assert GroundingLedger._price_anchored_numbers(segment) == expected
 
 
 def test_structured_report_is_not_rejected_for_its_own_formatting(tmp_path: Path) -> None:
