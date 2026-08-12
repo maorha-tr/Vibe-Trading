@@ -101,12 +101,25 @@ def _credentials() -> Optional[tuple[str, str]]:
     return None
 
 
+def _auth_headers() -> dict[str, str]:
+    """Key pair first, else a Sign-in-with-eToro bearer token (never both)."""
+    creds = _credentials()
+    if creds is not None:
+        api_key, user_key = creds
+        return {"x-api-key": api_key, "x-user-key": user_key}
+
+    from src.trading.connectors.etoro import sso
+
+    token = sso.bearer_token()
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    raise RuntimeError(
+        "eToro credentials missing: set ETORO_API_KEY and ETORO_USER_KEY, or sign in with eToro (SSO)."
+    )
+
+
 def _get_json(path: str, *, params: Optional[dict[str, Any]] = None) -> Any:
     """Authenticated throttled GET against the eToro public API."""
-    creds = _credentials()
-    if creds is None:
-        raise RuntimeError("eToro credentials missing: set ETORO_API_KEY and ETORO_USER_KEY.")
-    api_key, user_key = creds
     response = throttled_get(
         f"{_BASE_URL}{path}",
         host_key=HOST_KEY,
@@ -114,9 +127,8 @@ def _get_json(path: str, *, params: Optional[dict[str, Any]] = None) -> Any:
         params=params,
         headers={
             "Accept": "application/json",
-            "x-api-key": api_key,
-            "x-user-key": user_key,
             "x-request-id": str(uuid.uuid4()),
+            **_auth_headers(),
         },
     )
     response.raise_for_status()

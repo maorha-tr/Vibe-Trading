@@ -120,8 +120,21 @@ function appendQueryParam(url: string, key: string, value: string): string {
   return `${url}${sep}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
 }
 
+export interface EtoroSsoStatus {
+  connected: boolean;
+  client_configured: boolean;
+  username?: string | null;
+  subject?: string | null;
+  scopes?: string[];
+  expires_at?: number | null;
+  auth_mode?: "keys" | "sso" | null;
+  login_url?: string;
+}
+
 export const api = {
   uploadFile,
+  getEtoroSsoStatus: () => request<EtoroSsoStatus>("/auth/etoro/status"),
+  etoroSsoLogout: () => request<{ status: string }>("/auth/etoro/logout", { method: "POST" }),
   getCorrelation: (codes: string, days: number, method: "pearson" | "spearman") =>
     request<CorrelationResponse>(
       `/correlation?codes=${encodeURIComponent(codes)}&days=${encodeURIComponent(String(days))}&method=${encodeURIComponent(method)}`,

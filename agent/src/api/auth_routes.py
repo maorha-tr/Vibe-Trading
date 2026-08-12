@@ -1,6 +1,7 @@
-"""Auth helper routes — short-lived SSE tickets for browser EventSource auth.
+"""Auth helper routes — SSE tickets plus the Sign-in-with-eToro mount.
 
-Mounted by ``agent/api_server.py`` via ``register_auth_routes(app, ...)``.
+Mounted by ``agent/api_server.py`` via ``register_auth_routes(app, ...)``,
+which also mounts the eToro OAuth routes (``src.api.etoro_auth_routes``).
 
 A browser ``EventSource`` cannot send an ``Authorization`` header, so instead of
 putting the long-lived API key in the SSE URL (where it leaks into browser
@@ -53,3 +54,7 @@ def register_auth_routes(
         string and is invalidated on first use.
         """
         return {"ticket": _mint_sse_ticket()}
+
+    from src.api.etoro_auth_routes import register_etoro_auth_routes
+
+    register_etoro_auth_routes(app)

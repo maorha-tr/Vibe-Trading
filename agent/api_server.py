@@ -282,7 +282,7 @@ from src.api.live_routes import (  # noqa: F401, E402
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
 
-# --- Auth helpers (SSE tickets) ---
+# --- Auth helpers (SSE tickets + Sign in with eToro OAuth SSO) ---
 from src.api.auth_routes import register_auth_routes  # noqa: E402
 register_auth_routes(app)
 

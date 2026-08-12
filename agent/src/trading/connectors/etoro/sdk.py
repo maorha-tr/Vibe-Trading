@@ -1,8 +1,10 @@
 """eToro connector via the public REST API (``public-api.etoro.com``).
 
-Auth is the ``x-api-key``/``x-user-key`` header pair plus a fresh UUID
-``x-request-id`` on every call; for order creation the request id doubles as
-the idempotency key and is echoed back as ``referenceId``.
+Auth is the ``x-api-key``/``x-user-key`` header pair, or — when no key pair is
+configured — an ``Authorization: Bearer`` token from a "Sign in with eToro"
+session (see ``sso.py``); the API rejects requests carrying both (422). Every
+call adds a fresh UUID ``x-request-id``; for order creation the request id
+doubles as the idempotency key and is echoed back as ``referenceId``.
 
 Demo-vs-real safety boundary is structural on two independent axes:
 
@@ -234,6 +236,36 @@ def _missing_fields(config: EtoroConfig) -> list[str]:
     return missing
 
 
+def _auth_headers(config: EtoroConfig) -> dict[str, str]:
+    """Resolve auth headers: key pair first, else an SSO bearer token.
+
+    The two modes are mutually exclusive on the wire — eToro rejects requests
+    carrying both the key headers and ``Authorization`` with a 422.
+    """
+    if config.api_key and config.user_key:
+        return {"x-api-key": config.api_key, "x-user-key": config.user_key}
+    from src.trading.connectors.etoro import sso
+
+    token = sso.bearer_token()
+    if token:
+        return {"Authorization": f"Bearer {token}"}
+    missing = _missing_fields(config)
+    raise EtoroConfigError(
+        f"eToro connector not configured: missing {', '.join(missing)} and no "
+        "eToro SSO session. Set the API keys or sign in with eToro."
+    )
+
+
+def auth_mode(config: EtoroConfig | None = None) -> str | None:
+    """Return ``keys``, ``sso``, or ``None`` — without any network calls."""
+    cfg = config or load_config()
+    if cfg.api_key and cfg.user_key:
+        return "keys"
+    from src.trading.connectors.etoro import sso
+
+    return "sso" if sso.load_tokens() else None
+
+
 def _request(
     config: EtoroConfig,
     method: str,
@@ -244,16 +276,11 @@ def _request(
     request_id: str | None = None,
 ) -> Any:
     """Run an HTTP request and normalize eToro failure modes."""
-    missing = _missing_fields(config)
-    if missing:
-        raise EtoroConfigError(f"eToro connector not configured: missing {', '.join(missing)}.")
-
     url = f"{config.base_url.rstrip('/')}/{path.lstrip('/')}"
     headers = {
         "Accept": "application/json",
-        "x-api-key": config.api_key,
-        "x-user-key": config.user_key,
         "x-request-id": request_id or str(uuid.uuid4()),
+        **_auth_headers(config),
     }
     try:
         response = requests.request(
@@ -268,6 +295,11 @@ def _request(
         raise EtoroAPIError(f"eToro request failed: {exc}") from exc
 
     if response.status_code in (401, 403):
+        if "Authorization" in headers:
+            raise EtoroAPIError(
+                "eToro API authentication failed: the SSO session was rejected "
+                "(expired token or missing scope) — sign in with eToro again."
+            )
         raise EtoroAPIError(
             "eToro API authentication failed: check api_key/user_key and that the "
             f"user key was generated for the {'Demo' if config.is_demo else 'Real'} environment."
@@ -388,12 +420,16 @@ def check_status(config: EtoroConfig | None = None) -> dict[str, Any]:
         "config": _public_config(cfg),
         "sdk": {"package": "requests", "installed": True},
         "base_url": cfg.base_url,
+        "auth_mode": auth_mode(cfg),
     }
 
-    missing = _missing_fields(cfg)
-    if missing:
+    if report["auth_mode"] is None:
+        missing = _missing_fields(cfg)
         report["status"] = "error"
-        report["error"] = f"eToro connector not configured: missing {', '.join(missing)}."
+        report["error"] = (
+            f"eToro connector not configured: missing {', '.join(missing)} and "
+            "no eToro SSO session. Set the API keys or sign in with eToro."
+        )
         return report
 
     try:
