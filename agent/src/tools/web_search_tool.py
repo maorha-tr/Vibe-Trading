@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import time
 from typing import Any
 
@@ -28,6 +30,100 @@ logger = logging.getLogger(__name__)
 _DEFAULT_BACKENDS = "duckduckgo, google, bing, brave, mojeek, yahoo"
 _MAX_ATTEMPTS = 3
 _BACKOFF_BASE_SECONDS = 0.8
+
+# CA-bundle env vars primp (the Rust HTTP client under ddgs) honours, in its
+# own precedence order.
+_CA_ENV_VARS = ("PRIMP_CA_BUNDLE", "CA_CERT_FILE", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE")
+_SANITIZED_BUNDLE_NAME = "primp-ca-bundle.pem"
+# (source path, source mtime) -> sanitized path or None; recomputed when the
+# source bundle changes.
+_ca_bundle_cache: tuple[tuple[str, float], str | None] | None = None
+
+
+def _primp_ca_bundle() -> str | None:
+    """Return a CA bundle path primp can parse, or None to leave it alone.
+
+    Corporate-managed hosts point SSL_CERT_FILE / REQUESTS_CA_BUNDLE at a
+    combined bundle so Python HTTP clients trust the TLS-interception root.
+    primp honours those vars too, but its parser rejects the WHOLE bundle when
+    any single cert breaks its stricter rules (observed: self-signed
+    sha1WithRSA machine certs that OpenSSL tolerates), so every search died at
+    client construction with ``('builder error', None)``. When the env bundle
+    is rejected, rewrite it minus the offending certs and pass that path via
+    ``DDGS(verify=...)`` (forwarded to primp as ``ca_cert_file``, which
+    overrides the env vars). Cached on the source bundle's mtime.
+    """
+    global _ca_bundle_cache
+    source = next(
+        (os.environ[v] for v in _CA_ENV_VARS if os.environ.get(v) and os.path.isfile(os.environ[v])),
+        None,
+    )
+    if source is None:
+        return None
+    try:
+        key = (source, os.path.getmtime(source))
+    except OSError:
+        return None
+    if _ca_bundle_cache is not None and _ca_bundle_cache[0] == key:
+        return _ca_bundle_cache[1]
+    result = _sanitize_ca_bundle(source)
+    _ca_bundle_cache = (key, result)
+    return result
+
+
+def _sanitize_ca_bundle(source: str) -> str | None:
+    """Write a copy of ``source`` without the certs primp rejects; None = keep env."""
+    try:
+        import primp
+    except ImportError:
+        return None
+
+    def parses(path: str) -> bool:
+        try:
+            primp.Client(ca_cert_file=path)
+            return True
+        except Exception:  # noqa: BLE001 — any builder failure means "unusable"
+            return False
+
+    def probe(content: str) -> bool:
+        # primp caches loaded CA stores per file path, so reusing one probe
+        # file returns stale verdicts — every probe needs a fresh path.
+        import tempfile
+
+        fd, path = tempfile.mkstemp(suffix=".pem")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(content + "\n")
+            return parses(path)
+        finally:
+            os.unlink(path)
+
+    if parses(source):
+        return None
+    try:
+        from src.config.paths import get_runtime_root
+
+        text = open(source, encoding="utf-8", errors="ignore").read()
+        certs = re.findall(r"-----BEGIN [^-]+-----.*?-----END [^-]+-----", text, re.S)
+        kept = [cert for cert in certs if probe(cert)]
+        if not kept or not probe("\n".join(kept)):
+            return None
+        # Content-hashed name: primp's per-path CA cache can never go stale
+        # when the source bundle (and thus the sanitized copy) changes.
+        import hashlib
+
+        body = "\n".join(kept) + "\n"
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
+        out_path = get_runtime_root() / _SANITIZED_BUNDLE_NAME.replace(".pem", f"-{digest}.pem")
+        out_path.write_text(body, encoding="utf-8")
+        logger.warning(
+            "CA bundle %s is rejected by primp; using sanitized copy %s (%d of %d certs kept)",
+            source, out_path, len(kept), len(certs),
+        )
+        return str(out_path)
+    except Exception as exc:  # noqa: BLE001 — sanitizing is best-effort
+        logger.warning("could not sanitize CA bundle %s for primp: %s", source, exc)
+        return None
 
 
 def _aliyun_iqs_search(query: str, max_results: int = 5) -> list[dict] | None:
@@ -246,10 +342,15 @@ class WebSearchTool(BaseTool):
                 )
             supports_backend = False
 
+        # Legacy duckduckgo_search may not accept verify=; only the ddgs package
+        # is guaranteed to forward it to primp as ca_cert_file.
+        ca_bundle = _primp_ca_bundle() if supports_backend else None
+        client_kwargs = {"verify": ca_bundle} if ca_bundle else {}
+
         last_error: Exception | None = None
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
-                with DDGS() as client:
+                with DDGS(**client_kwargs) as client:
                     if supports_backend:
                         raw = list(client.text(query, max_results=max_results, backend=backends))
                     else:

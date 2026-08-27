@@ -196,3 +196,87 @@ def test_max_results_capped_at_10(monkeypatch):
         WebSearchTool().execute(query="q", max_results=50)
 
     assert seen["max_results"] == 10
+
+
+# ---------------------------------------------------------------------------
+# CA-bundle sanitizing for primp (corporate TLS interception hosts)
+# ---------------------------------------------------------------------------
+
+_GOOD_CERT = "-----BEGIN CERTIFICATE-----\nGOODCERT\n-----END CERTIFICATE-----"
+_BAD_CERT = "-----BEGIN CERTIFICATE-----\nBADCERT\n-----END CERTIFICATE-----"
+
+
+def _install_fake_primp(monkeypatch):
+    """Fake primp whose Client rejects any CA file containing BADCERT."""
+    module = ModuleType("primp")
+
+    class FakeClient:
+        def __init__(self, ca_cert_file=None, **kwargs):
+            if ca_cert_file is not None and "BADCERT" in open(ca_cert_file).read():
+                raise RuntimeError("('builder error', None)")
+
+    module.Client = FakeClient
+    monkeypatch.setitem(sys.modules, "primp", module)
+
+
+def _reset_ca_cache(monkeypatch):
+    monkeypatch.setattr("src.tools.web_search_tool._ca_bundle_cache", None)
+
+
+def test_primp_ca_bundle_no_env_vars(monkeypatch):
+    """Without CA env vars there is nothing to sanitize."""
+    from src.tools.web_search_tool import _CA_ENV_VARS, _primp_ca_bundle
+
+    _reset_ca_cache(monkeypatch)
+    for var in _CA_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+    assert _primp_ca_bundle() is None
+
+
+def test_primp_ca_bundle_parseable_bundle_left_alone(tmp_path, monkeypatch):
+    """A bundle primp accepts is used via the env vars, not rewritten."""
+    from src.tools.web_search_tool import _primp_ca_bundle
+
+    _install_fake_primp(monkeypatch)
+    _reset_ca_cache(monkeypatch)
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text(_GOOD_CERT + "\n")
+    monkeypatch.setenv("SSL_CERT_FILE", str(bundle))
+
+    assert _primp_ca_bundle() is None
+
+
+def test_primp_ca_bundle_rejected_bundle_sanitized(tmp_path, monkeypatch):
+    """A bundle primp rejects is rewritten without the offending certs."""
+    from src.tools.web_search_tool import _primp_ca_bundle
+
+    _install_fake_primp(monkeypatch)
+    _reset_ca_cache(monkeypatch)
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text(_GOOD_CERT + "\n" + _BAD_CERT + "\n" + _GOOD_CERT + "\n")
+    monkeypatch.setenv("SSL_CERT_FILE", str(bundle))
+    monkeypatch.setenv("VIBE_TRADING_HOME", str(tmp_path / "home"))
+    (tmp_path / "home").mkdir()
+
+    sanitized = _primp_ca_bundle()
+
+    assert sanitized is not None
+    content = open(sanitized).read()
+    assert "BADCERT" not in content
+    assert content.count("GOODCERT") == 2
+    # cached: a second call returns the same path without re-probing
+    assert _primp_ca_bundle() == sanitized
+
+
+def test_primp_ca_bundle_all_certs_rejected_falls_back(tmp_path, monkeypatch):
+    """If nothing survives sanitizing, leave the env untouched (best effort)."""
+    from src.tools.web_search_tool import _primp_ca_bundle
+
+    _install_fake_primp(monkeypatch)
+    _reset_ca_cache(monkeypatch)
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text(_BAD_CERT + "\n")
+    monkeypatch.setenv("SSL_CERT_FILE", str(bundle))
+
+    assert _primp_ca_bundle() is None
